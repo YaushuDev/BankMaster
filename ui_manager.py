@@ -4,7 +4,7 @@
 
 import tkinter as tk
 from tkinter import ttk
-import tkinter.font as tkfont  # Importación correcta del módulo font
+import tkinter.font as tkfont
 from email_manager import EmailManager
 from config_manager import ConfigManager
 from logger import Logger
@@ -15,7 +15,7 @@ class UIManager:
         """Inicializa la interfaz de usuario del bot"""
         self.root = root
         # Configurar fuente para soportar UTF-8
-        default_font = tkfont.nametofont("TkDefaultFont")  # Usando tkfont en lugar de tk.font
+        default_font = tkfont.nametofont("TkDefaultFont")
         default_font.configure(family="Arial", size=10)
         self.root.option_add("*Font", default_font)
 
@@ -55,35 +55,119 @@ class UIManager:
         self.bottom_left_panel = ttk.LabelFrame(self.main_frame, text="Configuración de Correo")
         self.bottom_left_panel.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
 
+        # Botón para abrir la configuración de correo con estilo normal
+        self.config_button = ttk.Button(
+            self.bottom_left_panel,
+            text="Configurar Correo",
+            command=self.open_email_config_modal
+        )
+        self.config_button.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+
+        # Configurar para que el botón se expanda horizontalmente
+        self.bottom_left_panel.columnconfigure(0, weight=1)
+
+    def open_email_config_modal(self):
+        """Abre una ventana modal para la configuración de correo"""
+        # Cargar configuración actual
+        config = self.config_manager.load_config()
+
+        # Crear ventana modal
+        modal = tk.Toplevel(self.root)
+        modal.title("Configuración de Correo")
+        modal.geometry("400x250")
+        modal.transient(self.root)  # Hace que la ventana sea modal
+        modal.grab_set()  # Previene interacción con la ventana principal
+        modal.focus_set()  # Enfoca la ventana modal
+
+        # Centrar la ventana modal en la pantalla
+        modal.update_idletasks()
+        width = modal.winfo_width()
+        height = modal.winfo_height()
+        x = (modal.winfo_screenwidth() // 2) - (width // 2)
+        y = (modal.winfo_screenheight() // 2) - (height // 2)
+        modal.geometry(f"{width}x{height}+{x}+{y}")
+
+        # Frame principal para la configuración
+        config_frame = ttk.Frame(modal, padding="10")
+        config_frame.pack(fill=tk.BOTH, expand=True)
+
         # Crear campos para configuración de correo
-        ttk.Label(self.bottom_left_panel, text="Proveedor de Correo:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(config_frame, text="Proveedor de Correo:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
 
         # Opciones de proveedores de correo
-        self.provider_var = tk.StringVar()
-        self.provider_combo = ttk.Combobox(self.bottom_left_panel, textvariable=self.provider_var)
-        self.provider_combo['values'] = ('Gmail', 'Outlook', 'Yahoo', 'Otro')
-        self.provider_combo.current(0)  # Por defecto selecciona Gmail
-        self.provider_combo.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
+        provider_var = tk.StringVar(value=config.get('provider', 'Gmail'))
+        provider_combo = ttk.Combobox(config_frame, textvariable=provider_var)
+        provider_combo['values'] = ('Gmail', 'Outlook', 'Yahoo', 'Otro')
+        provider_combo.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
 
-        ttk.Label(self.bottom_left_panel, text="Usuario (email):").grid(row=1, column=0, sticky="w", padx=5, pady=5)
-        self.email_var = tk.StringVar()
-        self.email_entry = ttk.Entry(self.bottom_left_panel, textvariable=self.email_var)
-        self.email_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
+        ttk.Label(config_frame, text="Usuario (email):").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        email_var = tk.StringVar(value=config.get('email', ''))
+        email_entry = ttk.Entry(config_frame, textvariable=email_var)
+        email_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
 
-        ttk.Label(self.bottom_left_panel, text="Contraseña:").grid(row=2, column=0, sticky="w", padx=5, pady=5)
-        self.password_var = tk.StringVar()
-        self.password_entry = ttk.Entry(self.bottom_left_panel, textvariable=self.password_var, show="*")
-        self.password_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=5)
+        ttk.Label(config_frame, text="Contraseña:").grid(row=2, column=0, sticky="w", padx=5, pady=5)
+        password_var = tk.StringVar(value=config.get('password', ''))
+        password_entry = ttk.Entry(config_frame, textvariable=password_var, show="*")
+        password_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=5)
 
-        # Botones de acción
-        self.test_button = ttk.Button(self.bottom_left_panel, text="Probar Conexión", command=self.test_connection)
-        self.test_button.grid(row=3, column=0, sticky="ew", padx=5, pady=(15, 5))
+        # Frame para botones en la parte inferior
+        button_frame = ttk.Frame(config_frame)
+        button_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=20)
 
-        self.save_button = ttk.Button(self.bottom_left_panel, text="Guardar Datos", command=self.save_config)
-        self.save_button.grid(row=3, column=1, sticky="ew", padx=5, pady=(15, 5))
+        # Función para probar la conexión desde la ventana modal
+        def test_connection_modal():
+            provider = provider_var.get()
+            email = email_var.get()
+            password = password_var.get()
 
-        # Hacer que los campos se expandan
-        self.bottom_left_panel.columnconfigure(1, weight=1)
+            if not all([provider, email, password]):
+                self.logger.log("Error: Todos los campos son obligatorios", level="ERROR")
+                return
+
+            smtp_result = self.email_manager.test_smtp_connection(provider, email, password)
+            imap_result = self.email_manager.test_imap_connection(provider, email, password)
+
+            if smtp_result and imap_result:
+                self.logger.log(f"Conexión exitosa a {provider} (SMTP e IMAP)", level="INFO")
+            else:
+                if not smtp_result:
+                    self.logger.log(f"Error en la conexión SMTP a {provider}", level="ERROR")
+                if not imap_result:
+                    self.logger.log(f"Error en la conexión IMAP a {provider}", level="ERROR")
+
+        # Función para guardar la configuración desde la ventana modal
+        def save_config_modal():
+            new_config = {
+                'provider': provider_var.get(),
+                'email': email_var.get(),
+                'password': password_var.get()
+            }
+
+            if not all(new_config.values()):
+                self.logger.log("Error: Todos los campos son obligatorios para guardar", level="ERROR")
+                return
+
+            if self.config_manager.save_config(new_config):
+                self.logger.log("Configuración guardada correctamente", level="INFO")
+                modal.destroy()  # Cerrar la ventana modal
+            else:
+                self.logger.log("Error al guardar la configuración", level="ERROR")
+
+        # Botones de acción - usando el mismo estilo que en la versión original
+        test_button = ttk.Button(button_frame, text="Probar Conexión", command=test_connection_modal)
+        test_button.grid(row=0, column=0, sticky="ew", padx=5)
+
+        save_button = ttk.Button(button_frame, text="Guardar Datos", command=save_config_modal)
+        save_button.grid(row=0, column=1, sticky="ew", padx=5)
+
+        cancel_button = ttk.Button(button_frame, text="Cancelar", command=modal.destroy)
+        cancel_button.grid(row=0, column=2, sticky="ew", padx=5)
+
+        # Hacer que los campos y botones se expandan
+        config_frame.columnconfigure(1, weight=1)
+        button_frame.columnconfigure(0, weight=1)
+        button_frame.columnconfigure(1, weight=1)
+        button_frame.columnconfigure(2, weight=1)
 
     def setup_bottom_right_panel(self):
         """Configura el panel inferior derecho para logs"""
@@ -107,53 +191,4 @@ class UIManager:
         # Cargar configuración si existe
         config = self.config_manager.load_config()
         if config:
-            self.provider_var.set(config.get('provider', 'Gmail'))
-            self.email_var.set(config.get('email', ''))
-            self.password_var.set(config.get('password', ''))
-
             self.logger.log("Configuración cargada correctamente.")
-
-    def test_connection(self):
-        """Prueba la conexión de correo con los datos proporcionados"""
-        # Obtener los valores de los campos
-        provider = self.provider_var.get()
-        email = self.email_var.get()
-        password = self.password_var.get()
-
-        # Validar que los campos estén completos
-        if not all([provider, email, password]):
-            self.logger.log("Error: Todos los campos son obligatorios", level="ERROR")
-            return
-
-        # Probar la conexión SMTP e IMAP
-        smtp_result = self.email_manager.test_smtp_connection(provider, email, password)
-        imap_result = self.email_manager.test_imap_connection(provider, email, password)
-
-        # Registrar resultados
-        if smtp_result and imap_result:
-            self.logger.log(f"Conexión exitosa a {provider} (SMTP e IMAP)", level="INFO")
-        else:
-            if not smtp_result:
-                self.logger.log(f"Error en la conexión SMTP a {provider}", level="ERROR")
-            if not imap_result:
-                self.logger.log(f"Error en la conexión IMAP a {provider}", level="ERROR")
-
-    def save_config(self):
-        """Guarda la configuración en un archivo JSON"""
-        # Obtener los valores de los campos
-        config = {
-            'provider': self.provider_var.get(),
-            'email': self.email_var.get(),
-            'password': self.password_var.get()
-        }
-
-        # Validar que los campos estén completos
-        if not all(config.values()):
-            self.logger.log("Error: Todos los campos son obligatorios para guardar", level="ERROR")
-            return
-
-        # Guardar la configuración
-        if self.config_manager.save_config(config):
-            self.logger.log("Configuración guardada correctamente", level="INFO")
-        else:
-            self.logger.log("Error al guardar la configuración", level="ERROR")
