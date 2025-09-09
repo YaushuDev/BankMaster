@@ -116,7 +116,7 @@ class EmailManager:
             print(f"Error en la conexión IMAP: {str(e)}")
             return False
 
-    def send_email(self, provider, email_addr, password, to, subject, body):
+    def send_email(self, provider, email_addr, password, to, subject, body, cc_list=None):
         """Envía un correo electrónico a través de SMTP"""
         try:
             # Obtener configuración del proveedor
@@ -133,6 +133,10 @@ class EmailManager:
             msg['From'] = email_addr
             msg['To'] = to
             msg['Subject'] = Header(subject, 'utf-8')
+
+            # Añadir cabecera CC si la lista existe
+            if cc_list:
+                msg['Cc'] = ", ".join(cc_list)
 
             # Adjuntar el cuerpo del mensaje con codificación UTF-8
             msg.attach(MIMEText(body, 'plain', 'utf-8'))
@@ -205,7 +209,8 @@ class EmailManager:
             print(f"Error al leer correos: {str(e)}")
             return []
 
-    def check_and_process_emails(self, provider, email_addr, password, search_titles, logger):
+    # --- FUNCIÓN MODIFICADA ---
+    def check_and_process_emails(self, provider, email_addr, password, search_titles, logger, cc_list=None):
         """Función principal que revisa emails y procesa los que coinciden usando el sistema modular"""
         try:
             # Obtener configuración del proveedor
@@ -228,17 +233,39 @@ class EmailManager:
                 # Seleccionar el buzón de correo
                 imap.select('INBOX')
 
-                # Buscar emails del día de hoy no leídos
+                # --- LÓGICA DE BÚSQUEDA MEJORADA ---
                 today = date.today().strftime("%d-%b-%Y")
-                status, messages = imap.search(None, f'UNSEEN SINCE "{today}"')
+
+                # Criterios base: no leído y desde hoy
+                search_criteria = ['(UNSEEN)', f'(SINCE "{today}")']
+
+                # Añadir criterios de asunto si existen
+                if search_titles:
+                    subject_queries = [f'(SUBJECT "{title.strip()}")' for title in search_titles if title.strip()]
+
+                    if len(subject_queries) > 1:
+                        # Si hay múltiples asuntos, unirlos con OR
+                        search_criteria.append(f'(OR {" ".join(subject_queries)})')
+                    elif subject_queries:
+                        # Si solo hay uno, añadirlo directamente
+                        search_criteria.append(subject_queries[0])
+
+                # Unir todos los criterios en una sola consulta
+                final_query = ' '.join(search_criteria)
+                logger.log(f"Ejecutando busqueda IMAP con criterio: {final_query}", level="INFO")
+
+                # Buscar emails usando la consulta final y charset UTF-8
+                status, messages = imap.search('UTF-8', final_query)
+                # --- FIN DE LÓGICA DE BÚSQUEDA MEJORADA ---
 
                 # Obtener la lista de IDs de mensajes
                 message_ids = messages[0].split()
 
                 if not message_ids:
-                    return  # No hay emails nuevos del día de hoy
+                    logger.log("No se encontraron correos nuevos que coincidan con los criterios.", level="INFO")
+                    return
 
-                logger.log(f"Encontrados {len(message_ids)} emails no leídos del día de hoy", level="INFO")
+                logger.log(f"Encontrados {len(message_ids)} emails que coinciden con la búsqueda", level="INFO")
 
                 # Procesar cada email
                 for msg_id in message_ids:
@@ -282,8 +309,9 @@ class EmailManager:
                                 response_data = self.case_handler.execute_case(matching_case, email_data, logger)
 
                                 if response_data:
-                                    # Enviar respuesta automática
-                                    if self._send_case_reply(provider, email_addr, password, response_data, logger):
+                                    # Enviar respuesta automática (con CC si está configurado)
+                                    if self._send_case_reply(provider, email_addr, password, response_data, logger,
+                                                             cc_list):
                                         logger.log(f"Respuesta automática enviada usando {matching_case}", level="INFO")
                                     else:
                                         logger.log(f"Error al enviar respuesta automática", level="ERROR")
@@ -292,7 +320,9 @@ class EmailManager:
                             else:
                                 logger.log(f"Error al marcar email como leído: {result}", level="ERROR")
                         else:
-                            logger.log(f"Email no coincide con ningún caso: '{subject}'", level="INFO")
+                            # Este log ahora es menos probable, ya que el servidor ya filtró por asunto
+                            logger.log(f"Email no coincide con ningún caso específico de respuesta: '{subject}'",
+                                       level="INFO")
 
                     except Exception as e:
                         logger.log(f"Error al procesar email individual: {str(e)}", level="ERROR")
@@ -300,7 +330,7 @@ class EmailManager:
         except Exception as e:
             logger.log(f"Error en check_and_process_emails: {str(e)}", level="ERROR")
 
-    def _send_case_reply(self, provider, email_addr, password, response_data, logger):
+    def _send_case_reply(self, provider, email_addr, password, response_data, logger, cc_list=None):
         """Envía una respuesta automática usando los datos del caso"""
         try:
             recipient = response_data.get('recipient', '')
@@ -312,7 +342,7 @@ class EmailManager:
                 recipient = recipient.split('<')[1].split('>')[0].strip()
 
             # Enviar la respuesta
-            return self.send_email(provider, email_addr, password, recipient, subject, body)
+            return self.send_email(provider, email_addr, password, recipient, subject, body, cc_list)
 
         except Exception as e:
             logger.log(f"Error al enviar respuesta del caso: {str(e)}", level="ERROR")

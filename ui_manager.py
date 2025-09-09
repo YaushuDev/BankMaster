@@ -89,8 +89,74 @@ class UIManager:
         )
         self.search_params_button.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
 
+        # --- NUEVO: Botón para Usuarios Adjuntos (CC) ---
+        self.cc_users_button = ttk.Button(
+            self.bottom_left_panel,
+            text="Usuarios Adjuntos (CC)",
+            command=self.open_cc_users_modal
+        )
+        self.cc_users_button.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        # --- FIN NUEVO ---
+
         # Configurar para que los botones se expandan horizontalmente
         self.bottom_left_panel.columnconfigure(0, weight=1)
+
+    # --- NUEVO: Modal para configurar usuarios en CC ---
+    def open_cc_users_modal(self):
+        """Abre una ventana modal para configurar correos en CC"""
+        # Cargar configuración actual
+        config = self.config_manager.load_config()
+        cc_users_list = config.get('cc_users', [])
+
+        modal = tk.Toplevel(self.root)
+        modal.title("Configurar Usuarios Adjuntos (CC)")
+        modal.geometry("400x300")
+        modal.transient(self.root)
+        modal.grab_set()
+        modal.focus_set()
+
+        modal.update_idletasks()
+        width = modal.winfo_width()
+        height = modal.winfo_height()
+        x = (modal.winfo_screenwidth() // 2) - (width // 2)
+        y = (modal.winfo_screenheight() // 2) - (height // 2)
+        modal.geometry(f"{width}x{height}+{x}+{y}")
+
+        cc_frame = ttk.Frame(modal, padding="10")
+        cc_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(cc_frame, text="Ingrese los correos a copiar (uno por línea):").pack(anchor="w", padx=5, pady=(0, 5))
+
+        cc_text = tk.Text(cc_frame, wrap=tk.WORD, height=10)
+        cc_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Insertar correos actuales
+        cc_text.insert(tk.END, "\n".join(cc_users_list))
+
+        button_frame = ttk.Frame(cc_frame)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+
+        def save_cc_users():
+            # Obtener texto, dividir por líneas y limpiar espacios/líneas vacías
+            emails_text = cc_text.get("1.0", tk.END).strip()
+            emails_list = [email.strip() for email in emails_text.split("\n") if email.strip()]
+
+            current_config = self.config_manager.load_config()
+            current_config['cc_users'] = emails_list
+
+            if self.config_manager.save_config(current_config):
+                self.logger.log("Lista de usuarios CC guardada correctamente.", level="INFO")
+                modal.destroy()
+            else:
+                self.logger.log("Error al guardar la lista de usuarios CC.", level="ERROR")
+
+        save_button = ttk.Button(button_frame, text="Guardar", command=save_cc_users)
+        save_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+
+        cancel_button = ttk.Button(button_frame, text="Cancelar", command=modal.destroy)
+        cancel_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+
+    # --- FIN NUEVO ---
 
     def open_email_config_modal(self):
         """Abre una ventana modal para la configuración de correo"""
@@ -163,17 +229,19 @@ class UIManager:
 
         # Función para guardar la configuración desde la ventana modal
         def save_config_modal():
-            new_config = {
+            # MODIFICADO: Mantener la configuración de CC al guardar
+            current_config = self.config_manager.load_config()
+            current_config.update({
                 'provider': provider_var.get(),
                 'email': email_var.get(),
                 'password': password_var.get()
-            }
+            })
 
-            if not all(new_config.values()):
+            if not all([current_config['provider'], current_config['email'], current_config['password']]):
                 self.logger.log("Error: Todos los campos son obligatorios para guardar", level="ERROR")
                 return
 
-            if self.config_manager.save_config(new_config):
+            if self.config_manager.save_config(current_config):
                 self.logger.log("Configuración guardada correctamente", level="INFO")
                 modal.destroy()  # Cerrar la ventana modal
             else:
@@ -305,6 +373,9 @@ class UIManager:
                 # Cargar configuración actual
                 config = self.config_manager.load_config()
                 search_params = config.get('search_params', {})
+                # --- MODIFICADO: Cargar lista de CC ---
+                cc_list = config.get('cc_users', [])
+                # --- FIN MODIFICADO ---
 
                 # Obtener títulos a buscar
                 search_titles = []
@@ -314,14 +385,16 @@ class UIManager:
                     search_titles.append(search_params['caso2'].strip())
 
                 if search_titles:
-                    # Buscar y procesar emails
+                    # --- MODIFICADO: Pasar la lista de CC al procesador de emails ---
                     self.email_manager.check_and_process_emails(
                         config['provider'],
                         config['email'],
                         config['password'],
                         search_titles,
-                        self.logger
+                        self.logger,
+                        cc_list  # Nuevo argumento
                     )
+                    # --- FIN MODIFICADO ---
 
                 # Esperar 30 segundos antes de la siguiente verificación
                 time.sleep(30)
