@@ -1,6 +1,6 @@
 # Archivo: email_manager.py
 # Ubicación: raíz del proyecto
-# Descripción: Gestiona las operaciones de correo electrónico (SMTP e IMAP)
+# Descripción: Gestiona las operaciones de correo electrónico (SMTP e IMAP) con sistema modular de casos
 
 import smtplib
 import imaplib
@@ -12,6 +12,7 @@ import email
 import base64
 from datetime import datetime, date
 import email.utils
+from case_handler import CaseHandler
 
 
 class EmailManager:
@@ -44,6 +45,9 @@ class EmailManager:
                 'imap_port': 993
             }
         }
+
+        # Inicializar el manejador de casos
+        self.case_handler = CaseHandler()
 
     def get_provider_config(self, provider):
         """Obtiene la configuración para un proveedor específico"""
@@ -202,7 +206,7 @@ class EmailManager:
             return []
 
     def check_and_process_emails(self, provider, email_addr, password, search_titles, logger):
-        """Función principal que revisa emails y procesa los que coinciden con los títulos de búsqueda"""
+        """Función principal que revisa emails y procesa los que coinciden usando el sistema modular"""
         try:
             # Obtener configuración del proveedor
             config = self.get_provider_config(provider)
@@ -256,37 +260,63 @@ class EmailManager:
 
                         logger.log(f"Revisando email: '{subject}' de {sender}", level="INFO")
 
-                        # Verificar si el subject coincide con alguno de los títulos de búsqueda
-                        match_found = False
-                        for search_title in search_titles:
-                            if search_title.lower() in subject.lower():
-                                logger.log(f"Email encontrado con título coincidente: '{subject}' de {sender}",
-                                           level="INFO")
+                        # Buscar caso coincidente usando el sistema modular
+                        matching_case = self.case_handler.find_matching_case(subject, logger)
 
-                                # Marcar como leído SOLO si hay coincidencia
-                                status, result = self._mark_as_read(imap, msg_id)
-                                if status:
-                                    logger.log(f"Email marcado como leído: {result}", level="INFO")
+                        if matching_case:
+                            logger.log(f"Email encontrado para caso: {matching_case}", level="INFO")
 
+                            # Marcar como leído
+                            status, result = self._mark_as_read(imap, msg_id)
+                            if status:
+                                logger.log(f"Email marcado como leído: {result}", level="INFO")
+
+                                # Preparar datos del email para el caso
+                                email_data = {
+                                    'sender': sender,
+                                    'subject': subject,
+                                    'msg_id': msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id)
+                                }
+
+                                # Ejecutar el caso correspondiente
+                                response_data = self.case_handler.execute_case(matching_case, email_data, logger)
+
+                                if response_data:
                                     # Enviar respuesta automática
-                                    if self._send_auto_reply(provider, email_addr, password, sender, subject):
-                                        logger.log(f"Respuesta automática enviada a {sender}", level="INFO")
+                                    if self._send_case_reply(provider, email_addr, password, response_data, logger):
+                                        logger.log(f"Respuesta automática enviada usando {matching_case}", level="INFO")
                                     else:
                                         logger.log(f"Error al enviar respuesta automática", level="ERROR")
                                 else:
-                                    logger.log(f"Error al marcar email como leído: {result}", level="ERROR")
-
-                                match_found = True
-                                break  # Solo procesar la primera coincidencia por email
-
-                        if not match_found:
-                            logger.log(f"Email no coincide con títulos de búsqueda: '{subject}'", level="INFO")
+                                    logger.log(f"Error al procesar {matching_case}", level="ERROR")
+                            else:
+                                logger.log(f"Error al marcar email como leído: {result}", level="ERROR")
+                        else:
+                            logger.log(f"Email no coincide con ningún caso: '{subject}'", level="INFO")
 
                     except Exception as e:
                         logger.log(f"Error al procesar email individual: {str(e)}", level="ERROR")
 
         except Exception as e:
             logger.log(f"Error en check_and_process_emails: {str(e)}", level="ERROR")
+
+    def _send_case_reply(self, provider, email_addr, password, response_data, logger):
+        """Envía una respuesta automática usando los datos del caso"""
+        try:
+            recipient = response_data.get('recipient', '')
+            subject = response_data.get('subject', '')
+            body = response_data.get('body', '')
+
+            # Extraer solo la dirección de email del remitente
+            if '<' in recipient and '>' in recipient:
+                recipient = recipient.split('<')[1].split('>')[0].strip()
+
+            # Enviar la respuesta
+            return self.send_email(provider, email_addr, password, recipient, subject, body)
+
+        except Exception as e:
+            logger.log(f"Error al enviar respuesta del caso: {str(e)}", level="ERROR")
+            return False
 
     def _decode_header_value(self, header_value):
         """Decodifica un valor de cabecera que puede estar codificado"""
@@ -327,27 +357,6 @@ class EmailManager:
         except Exception as e:
             return False, f"Error al marcar email como leído: {str(e)}"
 
-    def _send_auto_reply(self, provider, email_addr, password, recipient_email, original_subject):
-        """Envía una respuesta automática"""
-        try:
-            # Extraer solo la dirección de email del remitente (quitar nombre si existe)
-            if '<' in recipient_email and '>' in recipient_email:
-                # Formato: "Nombre <email@domain.com>"
-                recipient_email = recipient_email.split('<')[1].split('>')[0].strip()
-
-            # Crear el subject para la respuesta
-            reply_subject = f"Re: {original_subject}"
-
-            # Mensaje de respuesta simple
-            reply_body = "hola"
-
-            # Enviar la respuesta usando la función send_email existente
-            return self.send_email(provider, email_addr, password, recipient_email, reply_subject, reply_body)
-
-        except Exception as e:
-            print(f"Error al enviar respuesta automática: {str(e)}")
-            return False
-
     def _is_today(self, email_date_str):
         """Verifica si un email es del día de hoy"""
         try:
@@ -370,3 +379,15 @@ class EmailManager:
         # Eliminar caracteres no imprimibles y espacios no separables
         text = ''.join(c for c in text if c.isprintable() and ord(c) != 0xA0)
         return text
+
+    def reload_cases(self):
+        """Recarga todos los casos disponibles"""
+        self.case_handler.reload_cases()
+
+    def get_available_cases(self):
+        """Obtiene los casos disponibles"""
+        return self.case_handler.get_available_cases()
+
+    def get_case_info(self, case_name):
+        """Obtiene información de un caso específico"""
+        return self.case_handler.get_case_info(case_name)
